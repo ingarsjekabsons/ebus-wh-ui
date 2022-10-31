@@ -19,9 +19,11 @@ type Msg
     | EditName String
     | EditDescription String
     | EditInStock String
+    | EditPrice String
     | CreateName String
     | CreateDescription String
     | CreateInStock String
+    | CreatePrice String
     | SaveProduct Product
     | CreateProduct Product
     | CancelProductCreate
@@ -33,6 +35,7 @@ type alias Model =
     , editProd : Maybe Product
     , createProduct : Product
     , apiUrl : String
+    , wtf : String
     }
 
 
@@ -43,7 +46,7 @@ main =
 
 init : String -> ( Model, Cmd Msg )
 init apiUrl =
-    ( { apiUrl = apiUrl, products = [], editProd = Nothing, createProduct = Product 0 "" "" 0 }
+    ( { apiUrl = apiUrl, products = [], editProd = Nothing, createProduct = Product 0 "" "" 0 0, wtf = "" }
     , Http.get
         { url = apiUrl ++ "/products"
         , expect = Http.expectJson GotProducts (Decode.list prodDecoder)
@@ -62,8 +65,8 @@ update msg model =
                 Ok prods ->
                     ( { model | products = prods }, Cmd.none )
 
-                Err _ ->
-                    ( model, Cmd.none )
+                Err e ->
+                    ( { model | wtf = httpError e }, Cmd.none )
 
         EditProduct prod ->
             ( { model | editProd = Just prod }, Cmd.none )
@@ -89,6 +92,13 @@ update msg model =
             let
                 newEdit =
                     Maybe.map (\p -> { p | inStock = String.toInt i |> Maybe.withDefault 0 }) model.editProd
+            in
+            ( { model | editProd = newEdit }, Cmd.none )
+
+        EditPrice i ->
+            let
+                newEdit =
+                    Maybe.map (\p -> { p | priceMinorUnits = String.toInt i |> Maybe.withDefault 0 }) model.editProd
             in
             ( { model | editProd = newEdit }, Cmd.none )
 
@@ -122,6 +132,16 @@ update msg model =
             in
             ( { model | createProduct = new }, Cmd.none )
 
+        CreatePrice i ->
+            let
+                old =
+                    model.createProduct
+
+                new =
+                    { old | priceMinorUnits = Maybe.withDefault 0 (String.toInt i) }
+            in
+            ( { model | createProduct = new }, Cmd.none )
+
         SaveProduct product ->
             ( model
             , Http.request
@@ -136,7 +156,7 @@ update msg model =
             )
 
         CreateProduct product ->
-            ( { model | createProduct = Product 0 "" "" 0 }
+            ( { model | createProduct = Product 0 "" "" 0 0 }
             , Http.post
                 { url = model.apiUrl ++ "/products"
                 , expect = Http.expectWhatever ProductUpdated
@@ -146,8 +166,8 @@ update msg model =
 
         ProductUpdated res ->
             case res of
-                Err _ ->
-                    ( model, Cmd.none )
+                Err e ->
+                    ( { model | wtf = httpError e }, Cmd.none )
 
                 Ok _ ->
                     ( model
@@ -159,8 +179,8 @@ update msg model =
 
         ProductDeleted res ->
             case res of
-                Err _ ->
-                    ( model, Cmd.none )
+                Err e ->
+                    ( { model | wtf = httpError e }, Cmd.none )
 
                 Ok _ ->
                     ( model
@@ -171,7 +191,7 @@ update msg model =
                     )
 
         CancelProductCreate ->
-            ( { model | createProduct = Product 0 "" "" 0 }, Cmd.none )
+            ( { model | createProduct = Product 0 "" "" 0 0 }, Cmd.none )
 
         DeleteProduct i ->
             ( model
@@ -197,7 +217,7 @@ view model =
         [ div [ Attrs.class "row" ]
             [ div [ Attrs.class "col-sm-4" ]
                 [ div [ Attrs.class "h3", Attrs.class "text-center" ] [ text "Warehouse products" ]
-                , div [] []
+                , div [] [ text model.wtf ]
                 ]
             ]
         , div [ Attrs.class "row" ]
@@ -259,6 +279,16 @@ view model =
                                                 , Attrs.value (String.fromInt pc.inStock)
                                                 , Attrs.placeholder "In stock"
                                                 , Events.onInput CreateInStock
+                                                ]
+                                                []
+                                            ]
+                                        , div [ Attrs.class "row" ]
+                                            [ text "Price (Minor units): "
+                                            , input
+                                                [ Attrs.type_ "text"
+                                                , Attrs.value (String.fromInt pc.priceMinorUnits)
+                                                , Attrs.placeholder "Price"
+                                                , Events.onInput CreatePrice
                                                 ]
                                                 []
                                             ]
@@ -342,6 +372,16 @@ view model =
                                                         ]
                                                         []
                                                     ]
+                                                , div [ Attrs.class "row" ]
+                                                    [ text "Price (minor units): "
+                                                    , input
+                                                        [ Attrs.type_ "text"
+                                                        , Attrs.value (String.fromInt p.priceMinorUnits)
+                                                        , Attrs.placeholder "Price"
+                                                        , Events.onInput EditPrice
+                                                        ]
+                                                        []
+                                                    ]
                                                 ]
                                     ]
                                 ]
@@ -359,7 +399,7 @@ view model =
                                     , Attrs.class "btn"
                                     , Attrs.class "btn-primary"
                                     , Attrs.attribute "data-bs-dismiss" "modal"
-                                    , Events.onClick (SaveProduct (Maybe.withDefault (Product 1 "a" "a" 0) model.editProd))
+                                    , Events.onClick (SaveProduct (Maybe.withDefault (Product 1 "a" "a" 0 0) model.editProd))
                                     ]
                                     [ text "Save changes" ]
                                 ]
@@ -417,6 +457,14 @@ view model =
                                                 [ text (String.fromInt prod.inStock) ]
                                             ]
                                         ]
+                                    , div [ Attrs.class "row" ]
+                                        [ div [ Attrs.class "col-sm-8" ] [ text "Price (minor units): " ]
+                                        , div [ Attrs.class "col-sm-4" ]
+                                            [ span
+                                                []
+                                                [ text ((String.fromInt prod.priceMinorUnits) ++ " EUR") ]
+                                            ]
+                                        ]
                                     ]
                                 ]
                         )
@@ -437,16 +485,18 @@ type alias Product =
     , name : String
     , description : String
     , inStock : Int
+    , priceMinorUnits : Int
     }
 
 
 prodDecoder : Decode.Decoder Product
 prodDecoder =
-    Decode.map4 Product
+    Decode.map5 Product
         (Decode.field "id" Decode.int)
         (Decode.field "name" Decode.string)
         (Decode.field "description" Decode.string)
         (Decode.field "in_stock" Decode.int)
+        (Decode.field "price_minor_units" Decode.int)
 
 
 prodEncoder : Product -> Encode.Value
@@ -456,6 +506,7 @@ prodEncoder prod =
         , ( "name", Encode.string prod.name )
         , ( "description", Encode.string prod.description )
         , ( "in_stock", Encode.int prod.inStock )
+        , ( "price_minor_units", Encode.int prod.priceMinorUnits )
         ]
 
 
